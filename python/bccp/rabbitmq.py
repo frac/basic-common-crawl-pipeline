@@ -1,7 +1,7 @@
-from abc import ABC, abstractmethod
 import os
-import pika
+from abc import ABC, abstractmethod
 
+import pika
 
 QUEUE_NAME = "batches"
 

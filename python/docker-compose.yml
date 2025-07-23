@@ -1,0 +1,57 @@
+version: "3.8"
+services:
+  rabbitmq:
+    image: "rabbitmq:3-management"
+    container_name: "${COMPOSE_PROJECT_NAME:-bccp}-rabbitmq"
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+
+  minio:
+    profiles: ["no_s3"]
+    image: "minio/minio:latest"
+    container_name: "${COMPOSE_PROJECT_NAME:-bccp}-minio"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio-init:
+    profiles: ["no_s3"]
+    image: "minio/mc:latest"
+    container_name: "${COMPOSE_PROJECT_NAME:-bccp}-minio-init"
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/commoncrawl-extracted --ignore-existing;
+      /usr/bin/mc policy set public myminio/commoncrawl-extracted;
+      exit 0;
+      "
+
+  prometheus:
+    image: "prom/prometheus"
+    container_name: "${COMPOSE_PROJECT_NAME:-bccp}-prometheus"
+    ports:
+      - "9090:9090"
+    volumes:
+      - "../prometheus:/config"
+    command:
+      - "--config.file=/config/scrape_configs.yml"
+
+volumes:
+  minio_data:
