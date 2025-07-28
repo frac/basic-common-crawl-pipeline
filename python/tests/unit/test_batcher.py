@@ -1,7 +1,7 @@
 import pytest
 
 from bccp.batcher import Batcher
-from bccp.commoncrawl import Downloader, IndexReader
+from bccp.commoncrawl import Downloader, IndexReader, DEFAULT_CRAWL_VERSION
 from bccp.rabbitmq import MessageQueueChannel
 
 
@@ -199,3 +199,46 @@ def test_publish_all_urls(channel_spy, fake_downloader, mock_index_reader):
     )
     batcher.process_index()
     assert channel_spy.num_called == 1
+
+
+def test_batcher_default_crawl_version(channel_spy, fake_downloader, mock_index_reader):
+    """Test that batcher uses default crawl version when not specified."""
+    downloader = fake_downloader("dummy data")
+    
+    batcher = Batcher(
+        "dummy.csv", channel=channel_spy, downloader=downloader, index_reader=mock_index_reader
+    )
+    
+    assert batcher.crawl_version == DEFAULT_CRAWL_VERSION
+    assert batcher.crawl_path == f"cc-index/collections/{DEFAULT_CRAWL_VERSION}/indexes"
+
+
+def test_batcher_custom_crawl_version(channel_spy, fake_downloader, mock_index_reader):
+    """Test that batcher uses custom crawl version when specified."""
+    custom_version = "CC-MAIN-2023-14"
+    downloader = fake_downloader("dummy data")
+    
+    batcher = Batcher(
+        "dummy.csv", 
+        channel=channel_spy, 
+        downloader=downloader, 
+        index_reader=mock_index_reader,
+        crawl_version=custom_version
+    )
+    
+    assert batcher.crawl_version == custom_version
+    assert batcher.crawl_path == f"cc-index/collections/{custom_version}/indexes"
+
+
+def test_batcher_invalid_crawl_version(channel_spy, fake_downloader, mock_index_reader):
+    """Test that batcher raises error for invalid crawl version."""
+    downloader = fake_downloader("dummy data")
+    
+    with pytest.raises(ValueError, match="Invalid crawl version format"):
+        Batcher(
+            "dummy.csv", 
+            channel=channel_spy, 
+            downloader=downloader, 
+            index_reader=mock_index_reader,
+            crawl_version="invalid-format"
+        )

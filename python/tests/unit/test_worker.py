@@ -69,16 +69,17 @@ def test_worker_run(mock_start_http_server):
     mock_object_store = MagicMock()
     worker = Worker(channel=mock_channel, object_store=mock_object_store)
 
-    # Mock the start_consuming to prevent infinite loop
+    # Mock the start_consuming to raise KeyboardInterrupt (simulating Ctrl+C)
     mock_channel.start_consuming.side_effect = KeyboardInterrupt()
 
-    with pytest.raises(KeyboardInterrupt):
-        worker.run()
+    # The new implementation catches KeyboardInterrupt and breaks gracefully
+    worker.run()  # Should not raise an exception
 
     mock_start_http_server.assert_called_once_with(9001)
     mock_channel.basic_qos.assert_called_once_with(prefetch_count=1)
     mock_channel.basic_consume.assert_called_once()
     mock_channel.start_consuming.assert_called_once()
+    mock_channel.stop_consuming.assert_called_once()
 
 
 @patch("bccp.worker.WARCIterator")

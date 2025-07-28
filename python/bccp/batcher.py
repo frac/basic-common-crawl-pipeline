@@ -9,8 +9,10 @@ from .commoncrawl import (
     CRAWL_PATH,
     CCDownloader,
     CSVIndexReader,
+    DEFAULT_CRAWL_VERSION,
     Downloader,
     IndexReader,
+    build_crawl_path,
 )
 from .logging import log_with_fields, setup_logger
 from .rabbitmq import QUEUE_NAME, RabbitMQChannel
@@ -38,10 +40,13 @@ class Batcher:
         channel: Optional[RabbitMQChannel] = None,
         downloader: Optional[Downloader] = None,
         index_reader: Optional[IndexReader] = None,
+        crawl_version: str = DEFAULT_CRAWL_VERSION,
     ):
         self.cluster_idx_filename = cluster_idx_filename
+        self.crawl_version = crawl_version
+        self.crawl_path = build_crawl_path(crawl_version)
         self.channel = channel or RabbitMQChannel()
-        self.downloader = downloader or CCDownloader(f"{BASE_URL}/{CRAWL_PATH}")
+        self.downloader = downloader or CCDownloader(f"{BASE_URL}/{self.crawl_path}")
         self.index_reader = index_reader or CSVIndexReader(cluster_idx_filename)
         self.logger = setup_logger("batcher")
 
@@ -149,12 +154,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cluster-idx-filename", type=str, help="Input file path", required=True
     )
+    parser.add_argument(
+        "--crawl-version", 
+        type=str, 
+        default=DEFAULT_CRAWL_VERSION,
+        help=f"Common Crawl version to process (format: CC-MAIN-YYYY-WW, default: {DEFAULT_CRAWL_VERSION})"
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    batcher = Batcher(args.cluster_idx_filename)
+    batcher = Batcher(args.cluster_idx_filename, crawl_version=args.crawl_version)
+    
+    log_with_fields(
+        setup_logger("batcher"),
+        "info",
+        "Starting batcher",
+        cluster_idx_filename=args.cluster_idx_filename,
+        crawl_version=args.crawl_version,
+        crawl_path=batcher.crawl_path,
+    )
+    
     batcher.run()
 
 

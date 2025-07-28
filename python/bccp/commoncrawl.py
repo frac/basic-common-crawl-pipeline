@@ -1,11 +1,29 @@
 import csv
 import gzip
+import re
 from abc import ABC, abstractmethod
 
 import requests
 
-CRAWL_PATH = "cc-index/collections/CC-MAIN-2024-30/indexes"
 BASE_URL = "https://data.commoncrawl.org"
+
+
+def validate_crawl_version(crawl_version: str) -> bool:
+    """Validate that crawl version follows the expected format: CC-MAIN-YYYY-WW."""
+    pattern = r"^CC-MAIN-\d{4}-\d{2}$"
+    return bool(re.match(pattern, crawl_version))
+
+
+def build_crawl_path(crawl_version: str) -> str:
+    """Build the crawl path for a given crawl version."""
+    if not validate_crawl_version(crawl_version):
+        raise ValueError(f"Invalid crawl version format: {crawl_version}. Expected format: CC-MAIN-YYYY-WW")
+    return f"cc-index/collections/{crawl_version}/indexes"
+
+
+# Default crawl version for backward compatibility
+DEFAULT_CRAWL_VERSION = "CC-MAIN-2024-30"
+CRAWL_PATH = build_crawl_path(DEFAULT_CRAWL_VERSION)
 
 
 class Downloader(ABC):

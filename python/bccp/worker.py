@@ -329,12 +329,39 @@ class Worker:
 
     def run(self):
         start_http_server(9001)
-        self.channel.basic_qos(prefetch_count=1)
-        self.channel.basic_consume(
-            queue=QUEUE_NAME,
-            on_message_callback=self.process_batch,
-        )
-        self.channel.start_consuming()
+        
+        while True:
+            try:
+                self.channel.basic_qos(prefetch_count=1)
+                self.channel.basic_consume(
+                    queue=QUEUE_NAME,
+                    on_message_callback=self.process_batch,
+                )
+                
+                log_with_fields(
+                    self.logger,
+                    "info", 
+                    "Worker started consuming messages",
+                    queue_name=QUEUE_NAME
+                )
+                
+                self.channel.start_consuming()
+                
+            except KeyboardInterrupt:
+                log_with_fields(self.logger, "info", "Worker shutting down")
+                self.channel.stop_consuming()
+                break
+            except Exception as e:
+                log_with_fields(
+                    self.logger,
+                    "error",
+                    "Worker encountered error, reconnecting",
+                    error=str(e)
+                )
+                # Wait before reconnecting
+                time.sleep(5)
+                # Recreate the channel connection
+                self.channel = rabbitmq_channel()
 
 
 def parse_args() -> argparse.Namespace:
