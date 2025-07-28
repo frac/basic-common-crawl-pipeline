@@ -42,8 +42,12 @@ def rabbitmq_channel(rabbitmq_connection_string):
 @patch("bccp.worker.start_http_server")
 @patch("bccp.batcher.start_http_server")
 def test_batcher_worker_integration(
-    mock_batcher_server, mock_worker_server, rabbitmq_channel,
-    mock_batcher_downloader, mock_downloader, mock_index_reader
+    mock_batcher_server,
+    mock_worker_server,
+    rabbitmq_channel,
+    mock_batcher_downloader,
+    mock_downloader,
+    mock_index_reader,
 ):
     """Test end-to-end integration between batcher and worker."""
 
@@ -103,30 +107,29 @@ def test_worker_processes_batch(mock_worker_server, rabbitmq_channel, mock_downl
     # Create worker with mock downloader (uses real ObjectStore from env vars)
     worker = Worker(downloader=mock_downloader, channel=rabbitmq_channel)
 
-    # Mock trafilatura to avoid real text extraction
-    with patch("bccp.worker.trafilatura.extract") as mock_extract:
-        mock_extract.return_value = "Extracted text content"
+    # Process one message - using real text extraction
+    method_frame, header_frame, body = rabbitmq_channel.basic_get(queue=QUEUE_NAME)
+    assert method_frame is not None, "No message found in queue"
 
-        # Process one message
-        method_frame, header_frame, body = rabbitmq_channel.basic_get(queue=QUEUE_NAME)
-        assert method_frame is not None, "No message found in queue"
+    # Create mock method object
+    mock_method = MagicMock()
+    mock_method.delivery_tag = method_frame.delivery_tag
 
-        # Create mock method object
-        mock_method = MagicMock()
-        mock_method.delivery_tag = method_frame.delivery_tag
+    # Process the batch with real trafilatura text extraction
+    worker.process_batch(rabbitmq_channel, mock_method, None, body)
 
-        # Process the batch
-        worker.process_batch(rabbitmq_channel, mock_method, None, body)
-
-        # Verify text extraction was called
-        mock_extract.assert_called()
+    # No need to verify mocked extraction - let the real extraction happen
 
 
 @pytest.mark.docker
 @patch("bccp.worker.start_http_server")
 @patch("bccp.batcher.start_http_server")
 def test_full_pipeline_integration(
-    mock_batcher_server, mock_worker_server, rabbitmq_channel, mock_downloader, mock_index_reader
+    mock_batcher_server,
+    mock_worker_server,
+    rabbitmq_channel,
+    mock_downloader,
+    mock_index_reader,
 ):
     """Test complete pipeline: batcher processes index, worker consumes."""
 
@@ -155,30 +158,25 @@ def test_full_pipeline_integration(
     # Set up worker (uses real ObjectStore from env vars)
     worker = Worker(downloader=mock_downloader, channel=rabbitmq_channel)
 
-    with patch("bccp.worker.trafilatura.extract") as mock_extract:
-        mock_extract.return_value = "Extracted text content"
+    # Process all messages in queue with real text extraction
+    while True:
+        method_frame, header_frame, body = rabbitmq_channel.basic_get(queue=QUEUE_NAME)
+        if method_frame is None:
+            break
 
-        # Process all messages in queue
-        while True:
-            method_frame, header_frame, body = rabbitmq_channel.basic_get(
-                queue=QUEUE_NAME
-            )
-            if method_frame is None:
-                break
+        message_count += 1
+        batch = json.loads(body)
 
-            message_count += 1
-            batch = json.loads(body)
+        # Track processed URLs
+        for item in batch:
+            processed_urls.append(item["surt_url"])
 
-            # Track processed URLs
-            for item in batch:
-                processed_urls.append(item["surt_url"])
+        # Create mock method object
+        mock_method = MagicMock()
+        mock_method.delivery_tag = method_frame.delivery_tag
 
-            # Create mock method object
-            mock_method = MagicMock()
-            mock_method.delivery_tag = method_frame.delivery_tag
-
-            # Process the batch
-            worker.process_batch(rabbitmq_channel, mock_method, None, body)
+        # Process the batch with real trafilatura extraction
+        worker.process_batch(rabbitmq_channel, mock_method, None, body)
 
     # Verify pipeline processed data correctly
     assert message_count > 0, "No messages were processed"
@@ -189,7 +187,9 @@ def test_full_pipeline_integration(
 
 @pytest.mark.docker
 @patch("bccp.batcher.start_http_server")
-def test_prometheus_counters_e2e(mock_server, rabbitmq_channel, mock_downloader, mock_index_reader):
+def test_prometheus_counters_e2e(
+    mock_server, rabbitmq_channel, mock_downloader, mock_index_reader
+):
     """Test that Prometheus counters work correctly in end-to-end scenario."""
     from bccp.batcher import batches_published_counter, urls_processed_counter
     from bccp.worker import (
@@ -233,41 +233,36 @@ def test_prometheus_counters_e2e(mock_server, rabbitmq_channel, mock_downloader,
         final_urls_processed > initial_urls_processed
     ), "Batcher should have processed URLs"
 
-    # Process the message with worker
+    # Process the message with worker using real text extraction
     with patch("bccp.worker.start_http_server"):
-        with patch("bccp.worker.trafilatura.extract") as mock_extract:
-            mock_extract.return_value = "Extracted text"
+        worker = Worker(downloader=mock_downloader, channel=rabbitmq_channel)
 
-            worker = Worker(downloader=mock_downloader, channel=rabbitmq_channel)
+        # Get and process message
+        method_frame, header_frame, body = rabbitmq_channel.basic_get(queue=QUEUE_NAME)
+        if method_frame:
+            mock_method = MagicMock()
+            mock_method.delivery_tag = method_frame.delivery_tag
 
-            # Get and process message
-            method_frame, header_frame, body = rabbitmq_channel.basic_get(
-                queue=QUEUE_NAME
-            )
-            if method_frame:
-                mock_method = MagicMock()
-                mock_method.delivery_tag = method_frame.delivery_tag
+            worker.process_batch(rabbitmq_channel, mock_method, None, body)
 
-                worker.process_batch(rabbitmq_channel, mock_method, None, body)
+            # Verify worker metrics increased
+            final_worker_batches = batches_processed_counter._value.get()
+            final_docs_processed = documents_processed_counter._value.get()
+            final_text_extracted = text_extracted_counter._value.get()
+            final_bytes_downloaded = download_bytes_counter._value.get()
 
-                # Verify worker metrics increased
-                final_worker_batches = batches_processed_counter._value.get()
-                final_docs_processed = documents_processed_counter._value.get()
-                final_text_extracted = text_extracted_counter._value.get()
-                final_bytes_downloaded = download_bytes_counter._value.get()
-
-                assert (
-                    final_worker_batches > initial_worker_batches
-                ), "Worker batches processed counter should have increased"
-                assert (
-                    final_docs_processed > initial_docs_processed
-                ), "Worker documents processed counter should have increased"
-                assert (
-                    final_text_extracted > initial_text_extracted
-                ), "Worker text extracted counter should have increased"
-                assert (
-                    final_bytes_downloaded > initial_bytes_downloaded
-                ), "Worker download bytes counter should have increased"
+            assert (
+                final_worker_batches > initial_worker_batches
+            ), "Worker batches processed counter should have increased"
+            assert (
+                final_docs_processed > initial_docs_processed
+            ), "Worker documents processed counter should have increased"
+            assert (
+                final_text_extracted > initial_text_extracted
+            ), "Worker text extracted counter should have increased"
+            assert (
+                final_bytes_downloaded > initial_bytes_downloaded
+            ), "Worker download bytes counter should have increased"
 
 
 @pytest.mark.docker
@@ -293,7 +288,9 @@ def test_rabbitmq_connection(rabbitmq_connection_string):
 
 @pytest.mark.docker
 @patch("bccp.batcher.start_http_server")
-def test_batcher_filtering_logic(mock_server, rabbitmq_channel, mock_single_index_reader):
+def test_batcher_filtering_logic(
+    mock_server, rabbitmq_channel, mock_single_index_reader
+):
     """Test batcher properly filters non-English and non-200 status URLs."""
 
     # Mock downloader with mixed data (some should be filtered)
@@ -332,7 +329,11 @@ url4 20240722120759 {"url": "http://example4.com/", "status": "200", "languages"
 @patch("bccp.worker.start_http_server")
 @patch("bccp.batcher.start_http_server")
 def test_object_store_integration_e2e(
-    mock_batcher_server, mock_worker_server, rabbitmq_channel, mock_downloader, mock_index_reader
+    mock_batcher_server,
+    mock_worker_server,
+    rabbitmq_channel,
+    mock_downloader,
+    mock_index_reader,
 ):
     """Test end-to-end object store integration with real MinIO."""
     from bccp.objectstore import ObjectStore
@@ -363,36 +364,160 @@ def test_object_store_integration_e2e(
     )
     batcher.process_index()
 
-    # Process with worker using real object store
-    with patch("bccp.worker.trafilatura.extract") as mock_extract:
-        mock_extract.return_value = "This is extracted text from e2e test document."
+    # Process with worker using real object store and real text extraction
+    worker = Worker(
+        downloader=mock_downloader,
+        channel=rabbitmq_channel,
+        bucket_name="commoncrawl-extracted",
+    )
 
-        worker = Worker(
-            downloader=mock_downloader,
-            channel=rabbitmq_channel,
-            bucket_name="commoncrawl-extracted",
+    # Get and process message
+    method_frame, header_frame, body = rabbitmq_channel.basic_get(queue=QUEUE_NAME)
+    if method_frame:
+        mock_method = MagicMock()
+        mock_method.delivery_tag = method_frame.delivery_tag
+
+        worker.process_batch(rabbitmq_channel, mock_method, None, body)
+
+        # Verify metrics increased
+        final_stored = documents_stored_counter._value.get()
+        assert (
+            final_stored > initial_stored
+        ), "Documents should have been stored to MinIO"
+
+        final_errors = storage_errors_counter.labels(
+            error_type="store_document"
+        )._value.get()
+        assert final_errors == initial_errors, "No storage errors should have occurred"
+
+
+@pytest.mark.docker
+@patch("bccp.worker.start_http_server")
+def test_real_text_extraction_with_object_store_verification(
+    mock_worker_server, rabbitmq_channel, mock_downloader
+):
+    """Test that real trafilatura text extraction works and verify stored content."""
+    import json
+    from bccp.objectstore import ObjectStore
+    from datetime import datetime
+
+    # Create a test batch message
+    test_batch = [
+        {
+            "surt_url": "example.com/test-article",
+            "timestamp": "20240722120756",
+            "metadata": {
+                "url": "http://example.com/test-article",
+                "status": "200",
+                "languages": ["eng"],
+                "filename": "test-article.warc.gz",
+                "offset": "0",
+                "length": "400",
+            },
+        }
+    ]
+
+    # Publish test message to queue
+    rabbitmq_channel.basic_publish(
+        exchange="", routing_key=QUEUE_NAME, body=json.dumps(test_batch)
+    )
+
+    # Create worker with real ObjectStore
+    test_bucket = "test-extraction-verification"
+    worker = Worker(
+        downloader=mock_downloader,
+        channel=rabbitmq_channel,
+        bucket_name=test_bucket,
+        tokenizer_name="gpt2",
+    )
+
+    # Ensure bucket exists
+    object_store = ObjectStore()
+    assert object_store.ensure_bucket_exists(test_bucket), "Should create test bucket"
+
+    # Process message with real text extraction
+    method_frame, header_frame, body = rabbitmq_channel.basic_get(queue=QUEUE_NAME)
+    assert method_frame is not None, "No message found in queue"
+
+    mock_method = MagicMock()
+    mock_method.delivery_tag = method_frame.delivery_tag
+
+    # Process the batch - this should extract real text from our realistic HTML
+    worker.process_batch(rabbitmq_channel, mock_method, None, body)
+
+    # Now verify the content was actually stored with real extracted text
+    # Generate the expected object key (same logic as in ObjectStore.store_document)
+    # The timestamp "20240722120756" gets sliced to "2024072212" for the path
+    url_hash = abs(hash("http://example.com/test-article"))
+    expected_object_key = f"documents/2024072212/{url_hash}.jsonl"
+
+    # Get the stored document from MinIO
+    try:
+        response = object_store.client.get_object(test_bucket, expected_object_key)
+        stored_data = json.loads(response.read().decode("utf-8"))
+
+        # Verify the document structure
+        assert "url" in stored_data
+        assert "text" in stored_data
+        assert "text_length" in stored_data
+        assert "surt_url" in stored_data
+        assert "timestamp" in stored_data
+        assert "tokenization" in stored_data
+
+        # Verify the extracted text contains expected content from our realistic HTML
+        extracted_text = stored_data["text"]
+        assert len(extracted_text) > 0, "Text should have been extracted"
+
+        # Check for key phrases that trafilatura should extract from our realistic HTML
+        assert (
+            "Breaking: New Technology Advances" in extracted_text
+        ), "Should extract the main headline"
+        assert (
+            "artificial intelligence research" in extracted_text
+        ), "Should extract main content"
+        assert "Dr. Jane Smith" in extracted_text, "Should extract quoted text"
+
+        # Verify metadata
+        assert stored_data["url"] == "http://example.com/test-article"
+        assert stored_data["surt_url"] == "example.com/test-article"
+        assert stored_data["text_length"] == len(extracted_text)
+        assert stored_data["tokenization"]["tokenizer_name"] == "gpt2"
+        assert stored_data["tokenization"]["token_count"] == 90
+        tokens = stored_data["tokenization"]["tokens"]
+        assert tokens[:20] == [
+            29449,
+            25,
+            968,
+            8987,
+            8007,
+            1817,
+            198,
+            29193,
+            423,
+            925,
+            2383,
+            19304,
+            82,
+            287,
+            11666,
+            4430,
+            2267,
+            428,
+            1285,
+            13,
+        ]
+
+        print(
+            f"✅ Successfully verified extracted text content: {extracted_text[:100]}..."
         )
 
-        # Get and process message
-        method_frame, header_frame, body = rabbitmq_channel.basic_get(queue=QUEUE_NAME)
-        if method_frame:
-            mock_method = MagicMock()
-            mock_method.delivery_tag = method_frame.delivery_tag
-
-            worker.process_batch(rabbitmq_channel, mock_method, None, body)
-
-            # Verify metrics increased
-            final_stored = documents_stored_counter._value.get()
-            assert (
-                final_stored > initial_stored
-            ), "Documents should have been stored to MinIO"
-
-            final_errors = storage_errors_counter.labels(
-                error_type="store_document"
-            )._value.get()
-            assert (
-                final_errors == initial_errors
-            ), "No storage errors should have occurred"
+    except Exception as e:
+        # If we can't find the object, maybe the key generation is different
+        # List objects in the bucket to debug
+        objects = list(object_store.client.list_objects(test_bucket, recursive=True))
+        object_names = [obj.object_name for obj in objects]
+        print(f"Objects in bucket: {object_names}")
+        raise AssertionError(f"Could not find or read stored document: {e}")
 
 
 @pytest.mark.docker
@@ -434,3 +559,85 @@ def test_object_store_bucket_operations_e2e():
     assert object_store.store_document(
         test_bucket, test_document
     ), "Should be able to store document to MinIO"
+
+
+@pytest.mark.docker
+@patch("bccp.worker.start_http_server")
+def test_document_length_filtering_e2e(mock_worker_server, rabbitmq_channel):
+    """Test that document length filtering works in E2E context."""
+    from bccp.worker import Worker, documents_filtered_counter
+    from bccp.objectstore import ObjectStore
+    
+    # Create test batch with short content that should be filtered
+    test_batch = [
+        {
+            "surt_url": "example.com/short-article",
+            "timestamp": "20240722120756",
+            "metadata": {
+                "url": "http://example.com/short-article",
+                "status": "200",
+                "languages": ["eng"],
+                "filename": "short-article.warc.gz",
+                "offset": "0",
+                "length": "300",
+            },
+        }
+    ]
+    
+    # Create WARC data with very short extractable content
+    html_content = b"<html><head><title>Short</title></head><body><p>Short.</p></body></html>"
+    http_response = (
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
+        b"Content-Length: " + str(len(html_content)).encode() + b"\r\n\r\n" + html_content
+    )
+    
+    short_warc_data = (
+        b"WARC/1.0\r\nWARC-Type: response\r\n"
+        b"WARC-Target-URI: http://example.com/short-article\r\n"
+        b"WARC-Date: 2024-07-22T12:07:56Z\r\n"
+        b"WARC-Record-ID: <urn:uuid:12345>\r\n"
+        b"Content-Type: application/http; msgtype=response\r\n"
+        b"Content-Length: " + str(len(http_response)).encode() + b"\r\n\r\n" + http_response
+    )
+    
+    # Mock downloader to return short WARC data
+    mock_downloader = MagicMock()
+    mock_downloader.download_and_unzip.return_value = short_warc_data
+    
+    # Publish test message to queue
+    rabbitmq_channel.basic_publish(
+        exchange="", routing_key=QUEUE_NAME, body=json.dumps(test_batch)
+    )
+    
+    # Create worker with default length limits (should filter short documents)
+    test_bucket = "test-length-filtering"
+    worker = Worker(
+        downloader=mock_downloader,
+        channel=rabbitmq_channel,
+        bucket_name=test_bucket,
+    )
+    
+    # Ensure bucket exists
+    object_store = ObjectStore()
+    assert object_store.ensure_bucket_exists(test_bucket), "Should create test bucket"
+    
+    # Get initial counter values
+    initial_filtered = documents_filtered_counter.labels(filter_reason="too_short")._value.get()
+    
+    # Process message - should filter out the short document
+    method_frame, header_frame, body = rabbitmq_channel.basic_get(queue=QUEUE_NAME)
+    assert method_frame is not None, "No message found in queue"
+    
+    mock_method = MagicMock()
+    mock_method.delivery_tag = method_frame.delivery_tag
+    
+    worker.process_batch(rabbitmq_channel, mock_method, None, body)
+    
+    # Verify that the document was filtered due to short length
+    final_filtered = documents_filtered_counter.labels(filter_reason="too_short")._value.get()
+    assert final_filtered > initial_filtered, "Short document should have been filtered"
+    
+    # Verify no document was stored (since it was filtered)
+    # Try to list objects in the bucket - should be empty or very few
+    objects = list(object_store.client.list_objects(test_bucket, recursive=True))
+    assert len(objects) == 0, f"No documents should be stored due to filtering, but found {len(objects)} objects"

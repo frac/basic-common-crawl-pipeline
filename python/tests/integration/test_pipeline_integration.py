@@ -369,6 +369,8 @@ def test_worker_object_store_integration(mock_message_queue):
                 channel=message_queue,
                 object_store=mock_object_store,
                 bucket_name="test-integration-bucket",
+                min_doc_length=10,  # Allow shorter text for testing
+                max_doc_length=1000000,
             )
 
             # Simulate message processing
@@ -379,7 +381,7 @@ def test_worker_object_store_integration(mock_message_queue):
                 message_queue, mock_method, None, json.dumps(test_batch).encode()
             )
 
-    # Verify object store was called with proper document structure
+    # Verify object store was called with proper document structure  
     mock_object_store.store_document.assert_called_once()
     call_args = mock_object_store.store_document.call_args
 
@@ -455,6 +457,8 @@ def test_worker_object_store_failure_integration(mock_message_queue):
                 downloader=mock_worker_downloader,
                 channel=message_queue,
                 object_store=mock_object_store,
+                min_doc_length=10,  # Allow shorter text for testing
+                max_doc_length=1000000,
             )
 
             mock_method = MagicMock()
