@@ -3,7 +3,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bccp.commoncrawl import CCDownloader, CSVIndexReader, validate_crawl_version, build_crawl_path
+from bccp.commoncrawl import (
+    CCDownloader,
+    CSVIndexReader,
+    build_crawl_path,
+    validate_crawl_version,
+)
 
 
 def test_ccdownloader_download_and_unzip():
@@ -53,16 +58,16 @@ def test_validate_crawl_version():
     assert validate_crawl_version("CC-MAIN-2023-14") is True
     assert validate_crawl_version("CC-MAIN-2025-01") is True
     assert validate_crawl_version("CC-MAIN-2022-50") is True
-    
+
     # Invalid formats
     assert validate_crawl_version("CM-MAIN-2024-30") is False  # Wrong prefix
-    assert validate_crawl_version("CC-MAIN-24-30") is False    # Wrong year format
-    assert validate_crawl_version("CC-MAIN-2024-3") is False   # Wrong week format
-    assert validate_crawl_version("CC-MAIN-2024-100") is False # Invalid week number
-    assert validate_crawl_version("CC-MAIN-2024") is False     # Missing week
-    assert validate_crawl_version("2024-30") is False          # Missing prefix
-    assert validate_crawl_version("") is False                 # Empty string
-    assert validate_crawl_version("CC-MAIN-2024-30-extra") is False # Extra content
+    assert validate_crawl_version("CC-MAIN-24-30") is False  # Wrong year format
+    assert validate_crawl_version("CC-MAIN-2024-3") is False  # Wrong week format
+    assert validate_crawl_version("CC-MAIN-2024-100") is False  # Invalid week number
+    assert validate_crawl_version("CC-MAIN-2024") is False  # Missing week
+    assert validate_crawl_version("2024-30") is False  # Missing prefix
+    assert validate_crawl_version("") is False  # Empty string
+    assert validate_crawl_version("CC-MAIN-2024-30-extra") is False  # Extra content
 
 
 def test_build_crawl_path():
@@ -70,13 +75,13 @@ def test_build_crawl_path():
     # Valid input
     result = build_crawl_path("CC-MAIN-2024-30")
     assert result == "cc-index/collections/CC-MAIN-2024-30/indexes"
-    
-    result = build_crawl_path("CC-MAIN-2023-14") 
+
+    result = build_crawl_path("CC-MAIN-2023-14")
     assert result == "cc-index/collections/CC-MAIN-2023-14/indexes"
-    
+
     # Invalid input should raise ValueError
     with pytest.raises(ValueError, match="Invalid crawl version format"):
         build_crawl_path("invalid-format")
-        
+
     with pytest.raises(ValueError, match="Invalid crawl version format"):
         build_crawl_path("CC-MAIN-24-30")

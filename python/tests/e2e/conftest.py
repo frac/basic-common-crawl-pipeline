@@ -1,4 +1,4 @@
-import pytest
+# Configuration for e2e tests
 
 
 def pytest_configure(config):

@@ -53,9 +53,10 @@ def sample_warc_data():
         b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
         b"<html><head><title>Example Page</title></head>"
         b"<body><h1>Welcome to Example.com</h1>"
-        b"<p>This is a sample paragraph with some meaningful content that trafilatura can extract.</p>"
-        b"<p>Another paragraph with more <em>text content</em> for testing purposes.</p>"
-        b"<div class='content'><p>Even more content in a div for comprehensive testing.</p></div>"
+        b"<p>This is a sample paragraph with some meaningful content "
+        b"that trafilatura can extract.</p>"
+        b"<p>Another paragraph with more <em>text content</em> for testing.</p>"
+        b"<div class='content'><p>Even more content in a div for testing.</p></div>"
         b"</body></html>"
     )
 
@@ -396,8 +397,9 @@ def worker_with_tokenizer(
     mock_downloader, mock_channel, mock_object_store, mock_tokenizer
 ):
     """Worker instance with tokenizer enabled."""
-    from bccp.worker import Worker
     from unittest.mock import patch
+
+    from bccp.worker import Worker
 
     with patch(
         "bccp.worker.AutoTokenizer.from_pretrained", return_value=mock_tokenizer
@@ -414,7 +416,7 @@ def worker_with_tokenizer(
 def worker_with_custom_length_limits(mock_downloader, mock_channel, mock_object_store):
     """Worker instance with custom document length limits for testing."""
     from bccp.worker import Worker
-    
+
     return Worker(
         downloader=mock_downloader,
         channel=mock_channel,
@@ -428,7 +430,7 @@ def worker_with_custom_length_limits(mock_downloader, mock_channel, mock_object_
 def worker_with_strict_min_length(mock_downloader, mock_channel, mock_object_store):
     """Worker instance with strict minimum length for filtering tests."""
     from bccp.worker import Worker
-    
+
     return Worker(
         downloader=mock_downloader,
         channel=mock_channel,
@@ -442,7 +444,7 @@ def worker_with_strict_min_length(mock_downloader, mock_channel, mock_object_sto
 def worker_with_strict_max_length(mock_downloader, mock_channel, mock_object_store):
     """Worker instance with strict maximum length for filtering tests."""
     from bccp.worker import Worker
-    
+
     return Worker(
         downloader=mock_downloader,
         channel=mock_channel,
@@ -456,10 +458,10 @@ def worker_with_strict_max_length(mock_downloader, mock_channel, mock_object_sto
 @pytest.fixture
 def mixed_status_cdx_data():
     """CDX data with mixed status codes for filtering tests."""
-    return b"""url1 20240722120756 {"url": "http://example1.com/", "status": "200", "languages": ["eng"], "filename": "test1.warc.gz"}
-url2 20240722120757 {"url": "http://example2.com/", "status": "404", "languages": ["eng"], "filename": "test2.warc.gz"}
-url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages": ["fra"], "filename": "test3.warc.gz"}
-url4 20240722120759 {"url": "http://example4.com/", "status": "200", "languages": ["eng"], "filename": "test4.warc.gz"}"""
+    return b"""url1 20240722120756 {"url": "http://example1.com/", "status": "200", "languages": ["eng"], "filename": "test1.warc.gz"}  # noqa: E501
+url2 20240722120757 {"url": "http://example2.com/", "status": "404", "languages": ["eng"], "filename": "test2.warc.gz"}  # noqa: E501
+url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages": ["fra"], "filename": "test3.warc.gz"}  # noqa: E501
+url4 20240722120759 {"url": "http://example4.com/", "status": "200", "languages": ["eng"], "filename": "test4.warc.gz"}"""  # noqa: E501
 
 
 @pytest.fixture
@@ -478,10 +480,10 @@ def realistic_warc_data():
     <main>
         <article>
             <h2>Breaking: New Technology Advances</h2>
-            <p class="lead">Scientists have made significant breakthroughs in artificial intelligence research this week.</p>
-            <p>The research team at Example University published their findings in the latest journal. The study shows promising results for future applications in various industries.</p>
-            <p>According to lead researcher Dr. Jane Smith, "This technology could revolutionize how we process information and solve complex problems."</p>
-            <p>The implications for healthcare, finance, and education are particularly noteworthy according to industry experts.</p>
+            <p class="lead">Scientists have made significant breakthroughs in artificial intelligence research this week.</p>  # noqa: E501
+            <p>The research team at Example University published their findings in the latest journal. The study shows promising results for future applications in various industries.</p>  # noqa: E501
+            <p>According to lead researcher Dr. Jane Smith, "This technology could revolutionize how we process information and solve complex problems."</p>  # noqa: E501
+            <p>The implications for healthcare, finance, and education are particularly noteworthy according to industry experts.</p>  # noqa: E501
         </article>
     </main>
     <footer><p>Copyright 2024 Example News</p></footer>

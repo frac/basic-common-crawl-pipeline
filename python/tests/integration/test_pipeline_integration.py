@@ -1,10 +1,7 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from bccp.batcher import Batcher
-from bccp.commoncrawl import IndexReader
 from bccp.worker import Worker
 
 
@@ -16,12 +13,16 @@ def test_batcher_worker_pipeline_integration(mock_message_queue, mock_index_read
 
     # Mock batcher downloader - returns CDX data
     mock_batcher_downloader = MagicMock()
-    mock_batcher_downloader.download_and_unzip.return_value = b"""0,100,22,165)/ 20240722120756 {"url": "http://example1.com/", "mime": "text/html", "status": "200", "languages": ["eng"], "digest": "ABC123", "length": "200", "offset": "0", "filename": "test1.warc.gz"}
-101,141,199,66)/ 20240722120757 {"url": "http://example2.com/", "mime": "text/html", "status": "200", "languages": ["eng"], "digest": "DEF456", "length": "300", "offset": "200", "filename": "test2.warc.gz"}"""
+    # CDX data with 2 entries that should pass all filters
+    cdx_data = (
+        b'0,100,22,165)/ 20240722120756 {"url": "http://example1.com/", "mime": "text/html", "status": "200", "languages": ["eng"], "digest": "ABC123", "length": "200", "offset": "0", "filename": "test1.warc.gz"}\n'  # noqa: E501
+        b'101,141,199,66)/ 20240722120757 {"url": "http://example2.com/", "mime": "text/html", "status": "200", "languages": ["eng"], "digest": "DEF456", "length": "300", "offset": "200", "filename": "test2.warc.gz"}'  # noqa: E501
+    )
+    mock_batcher_downloader.download_and_unzip.return_value = cdx_data
 
     # Mock worker downloader - returns WARC data
     mock_worker_downloader = MagicMock()
-    mock_worker_downloader.download_and_unzip.return_value = b"""WARC/1.0\r\nWARC-Type: response\r\nWARC-Target-URI: http://example.com/\r\nWARC-Date: 2024-07-22T12:07:56Z\r\nWARC-Record-ID: <urn:uuid:12345>\r\nContent-Type: application/http; msgtype=response\r\nContent-Length: 150\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Test Page</h1><p>Sample content for testing.</p></body></html>"""
+    mock_worker_downloader.download_and_unzip.return_value = b"""WARC/1.0\r\nWARC-Type: response\r\nWARC-Target-URI: http://example.com/\r\nWARC-Date: 2024-07-22T12:07:56Z\r\nWARC-Record-ID: <urn:uuid:12345>\r\nContent-Type: application/http; msgtype=response\r\nContent-Length: 150\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Test Page</h1><p>Sample content for testing.</p></body></html>"""  # noqa: E501
 
     index_reader = mock_index_reader
 
@@ -81,11 +82,15 @@ def test_batcher_filtering_integration(mock_message_queue, mock_single_index_rea
 
     # Mock downloader with mixed status codes and languages
     mock_downloader = MagicMock()
-    mock_downloader.download_and_unzip.return_value = b"""url1 20240722120756 {"url": "http://example1.com/", "status": "200", "languages": ["eng"], "filename": "test1.warc.gz"}
-url2 20240722120757 {"url": "http://example2.com/", "status": "404", "languages": ["eng"], "filename": "test2.warc.gz"}
-url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages": ["fra"], "filename": "test3.warc.gz"}
-url4 20240722120759 {"url": "http://example4.com/", "status": "200", "languages": ["eng"], "filename": "test4.warc.gz"}
-url5 20240722120800 {"url": "http://example5.com/", "status": "200", "languages": ["eng"], "filename": "test5.warc.gz"}"""
+    # CDX data: 5 URLs, 2 should be filtered (url2=404, url3=French)
+    cdx_data = (
+        b'url1 20240722120756 {"url": "http://example1.com/", "status": "200", "languages": ["eng"], "filename": "test1.warc.gz"}\n'  # noqa: E501
+        b'url2 20240722120757 {"url": "http://example2.com/", "status": "404", "languages": ["eng"], "filename": "test2.warc.gz"}\n'  # noqa: E501
+        b'url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages": ["fra"], "filename": "test3.warc.gz"}\n'  # noqa: E501
+        b'url4 20240722120759 {"url": "http://example4.com/", "status": "200", "languages": ["eng"], "filename": "test4.warc.gz"}\n'  # noqa: E501
+        b'url5 20240722120800 {"url": "http://example5.com/", "status": "200", "languages": ["eng"], "filename": "test5.warc.gz"}'  # noqa: E501
+    )
+    mock_downloader.download_and_unzip.return_value = cdx_data
 
     index_reader = mock_single_index_reader
 
@@ -132,7 +137,7 @@ Content-Length: 150\r
 HTTP/1.1 200 OK\r
 Content-Type: text/html\r
 \r
-<html><head><title>Test</title></head><body><h1>Main Title</h1><p>This is some test content for extraction.</p></body></html>"""
+<html><head><title>Test</title></head><body><h1>Main Title</h1><p>This is some test content for extraction.</p></body></html>"""  # noqa: E501
 
     test_batch = [
         {
@@ -193,7 +198,7 @@ def test_batch_size_handling_integration(mock_message_queue, mock_single_index_r
     urls_data = []
     for i in range(5):
         urls_data.append(
-            f'url{i} 20240722120756 {{"url": "http://example{i}.com/", "status": "200", "languages": ["eng"], "filename": "test{i}.warc.gz"}}'
+            f'url{i} 20240722120756 {{"url": "http://example{i}.com/", "status": "200", "languages": ["eng"], "filename": "test{i}.warc.gz"}}'  # noqa: E501
         )
 
     mock_downloader = MagicMock()
@@ -210,7 +215,6 @@ def test_batch_size_handling_integration(mock_message_queue, mock_single_index_r
             index_reader=index_reader,
         )
         # Override batch size for testing
-        original_batch_size = batcher.__class__.__dict__.get("BATCH_SIZE", 50)
 
         # Manually set smaller batch size by modifying the constant in the process
         with patch("bccp.batcher.BATCH_SIZE", 2):
@@ -268,7 +272,6 @@ def test_prometheus_metrics_integration(mock_message_queue, mock_single_index_re
     from bccp.batcher import (
         batches_published_counter,
         cdx_chunks_processed_counter,
-        urls_filtered_counter,
         urls_processed_counter,
     )
 
@@ -279,12 +282,15 @@ def test_prometheus_metrics_integration(mock_message_queue, mock_single_index_re
     initial_processed = urls_processed_counter._value.get()
     initial_chunks = cdx_chunks_processed_counter._value.get()
 
-    # Mock downloader with mixed data
+    # Mock downloader with mixed data for metrics testing
     mock_downloader = MagicMock()
-    mock_downloader.download_and_unzip.return_value = b"""url1 20240722120756 {"url": "http://example1.com/", "status": "200", "languages": ["eng"]}
-url2 20240722120757 {"url": "http://example2.com/", "status": "404", "languages": ["eng"]}
-url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages": ["fra"]}
-url4 20240722120759 {"url": "http://example4.com/", "status": "200", "languages": ["eng"]}"""
+    cdx_data = (
+        b'url1 20240722120756 {"url": "http://example1.com/", "status": "200", "languages": ["eng"]}\n'  # noqa: E501
+        b'url2 20240722120757 {"url": "http://example2.com/", "status": "404", "languages": ["eng"]}\n'  # noqa: E501
+        b'url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages": ["fra"]}\n'  # noqa: E501
+        b'url4 20240722120759 {"url": "http://example4.com/", "status": "200", "languages": ["eng"]}'  # noqa: E501
+    )
+    mock_downloader.download_and_unzip.return_value = cdx_data
 
     index_reader = mock_single_index_reader
 
@@ -327,19 +333,16 @@ url4 20240722120759 {"url": "http://example4.com/", "status": "200", "languages"
 
 def test_worker_object_store_integration(mock_message_queue):
     """Test worker object store integration in isolation."""
-    from bccp.worker import documents_stored_counter, storage_errors_counter
+    from bccp.worker import documents_stored_counter
 
     message_queue = mock_message_queue
 
     # Get initial metric values
     initial_stored = documents_stored_counter._value.get()
-    initial_errors = storage_errors_counter.labels(
-        error_type="store_document"
-    )._value.get()
 
     # Mock downloader that returns valid WARC data
     mock_worker_downloader = MagicMock()
-    mock_worker_downloader.download_and_unzip.return_value = b"""WARC/1.0\r\nWARC-Type: response\r\nWARC-Target-URI: http://example.com/test\r\nWARC-Date: 2024-07-22T12:07:56Z\r\nWARC-Record-ID: <urn:uuid:12345>\r\nContent-Type: application/http; msgtype=response\r\nContent-Length: 100\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Test Page</h1><p>Sample content for testing.</p></body></html>"""
+    mock_worker_downloader.download_and_unzip.return_value = b"""WARC/1.0\r\nWARC-Type: response\r\nWARC-Target-URI: http://example.com/test\r\nWARC-Date: 2024-07-22T12:07:56Z\r\nWARC-Record-ID: <urn:uuid:12345>\r\nContent-Type: application/http; msgtype=response\r\nContent-Length: 100\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Test Page</h1><p>Sample content for testing.</p></body></html>"""  # noqa: E501
 
     # Create test batch data with all required metadata
     test_batch = [
@@ -381,7 +384,7 @@ def test_worker_object_store_integration(mock_message_queue):
                 message_queue, mock_method, None, json.dumps(test_batch).encode()
             )
 
-    # Verify object store was called with proper document structure  
+    # Verify object store was called with proper document structure
     mock_object_store.store_document.assert_called_once()
     call_args = mock_object_store.store_document.call_args
 
@@ -429,7 +432,7 @@ def test_worker_object_store_failure_integration(mock_message_queue):
 
     # Mock downloader that returns valid WARC data
     mock_worker_downloader = MagicMock()
-    mock_worker_downloader.download_and_unzip.return_value = b"""WARC/1.0\r\nWARC-Type: response\r\nWARC-Target-URI: http://example.com/test\r\nWARC-Date: 2024-07-22T12:07:56Z\r\nWARC-Record-ID: <urn:uuid:12345>\r\nContent-Type: application/http; msgtype=response\r\nContent-Length: 100\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Test Page</h1><p>Sample content for testing.</p></body></html>"""
+    mock_worker_downloader.download_and_unzip.return_value = b"""WARC/1.0\r\nWARC-Type: response\r\nWARC-Target-URI: http://example.com/test\r\nWARC-Date: 2024-07-22T12:07:56Z\r\nWARC-Record-ID: <urn:uuid:12345>\r\nContent-Type: application/http; msgtype=response\r\nContent-Length: 100\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Test Page</h1><p>Sample content for testing.</p></body></html>"""  # noqa: E501
 
     test_batch = [
         {
@@ -498,21 +501,24 @@ def test_prometheus_filtering_metrics_integration(
         initial_non_english = urls_filtered_counter.labels(
             reason="non_english"
         )._value.get()
-    except:
+    except KeyError:
         initial_non_english = 0
 
     try:
         initial_non_200 = urls_filtered_counter.labels(
             reason="non_200_status"
         )._value.get()
-    except:
+    except KeyError:
         initial_non_200 = 0
 
     # Mock downloader with data that will trigger specific filters
     mock_downloader = MagicMock()
-    mock_downloader.download_and_unzip.return_value = b"""url1 20240722120756 {"url": "http://example1.com/", "status": "200", "languages": ["eng"]}
-url2 20240722120757 {"url": "http://example2.com/", "status": "404", "languages": ["eng"]}
-url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages": ["fra"]}"""
+    cdx_data = (
+        b'url1 20240722120756 {"url": "http://example1.com/", "status": "200", "languages": ["eng"]}\n'  # noqa: E501
+        b'url2 20240722120757 {"url": "http://example2.com/", "status": "404", "languages": ["eng"]}\n'  # noqa: E501
+        b'url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages": ["fra"]}'  # noqa: E501
+    )
+    mock_downloader.download_and_unzip.return_value = cdx_data
 
     index_reader = mock_single_index_reader
 
@@ -530,9 +536,10 @@ url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages"
     final_non_200 = urls_filtered_counter.labels(reason="non_200_status")._value.get()
 
     # Should have filtered 1 non-English URL (url3)
-    assert (
-        final_non_english - initial_non_english == 1
-    ), f"Expected 1 non-English URL filtered, got {final_non_english - initial_non_english}"
+    assert final_non_english - initial_non_english == 1, (
+        f"Expected 1 non-English URL filtered, got "
+        f"{final_non_english - initial_non_english}"
+    )
 
     # Should have filtered 1 non-200 status URL (url2)
     assert (
@@ -541,7 +548,7 @@ url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages"
 
 
 def test_worker_prometheus_metrics_integration(mock_message_queue):
-    """Test that worker Prometheus metrics are correctly incremented during processing."""
+    """Test worker Prometheus metrics are correctly incremented during processing."""
     from bccp.worker import (
         batches_processed_counter,
         documents_processed_counter,
@@ -575,7 +582,7 @@ def test_worker_prometheus_metrics_integration(mock_message_queue):
 
     # Mock downloader that returns valid WARC data
     mock_worker_downloader = MagicMock()
-    mock_worker_downloader.download_and_unzip.return_value = b"""WARC/1.0\r\nWARC-Type: response\r\nWARC-Target-URI: http://example.com/test\r\nWARC-Date: 2024-07-22T12:07:56Z\r\nWARC-Record-ID: <urn:uuid:12345>\r\nContent-Type: application/http; msgtype=response\r\nContent-Length: 100\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Test Page</h1><p>Sample content for testing.</p></body></html>"""
+    mock_worker_downloader.download_and_unzip.return_value = b"""WARC/1.0\r\nWARC-Type: response\r\nWARC-Target-URI: http://example.com/test\r\nWARC-Date: 2024-07-22T12:07:56Z\r\nWARC-Record-ID: <urn:uuid:12345>\r\nContent-Type: application/http; msgtype=response\r\nContent-Length: 100\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Test Page</h1><p>Sample content for testing.</p></body></html>"""  # noqa: E501
 
     with patch("bccp.worker.start_http_server"):
         with patch("bccp.worker.trafilatura.extract") as mock_extract:
@@ -619,12 +626,14 @@ def test_worker_prometheus_metrics_integration(mock_message_queue):
     ), "Worker download bytes counter should have increased"
 
     # Verify specific increments
-    assert (
-        final_batches_processed - initial_batches_processed == 1
-    ), f"Expected 1 batch processed, got {final_batches_processed - initial_batches_processed}"
-    assert (
-        final_docs_processed - initial_docs_processed == 1
-    ), f"Expected 1 document processed, got {final_docs_processed - initial_docs_processed}"
+    assert final_batches_processed - initial_batches_processed == 1, (
+        f"Expected 1 batch processed, got "
+        f"{final_batches_processed - initial_batches_processed}"
+    )
+    assert final_docs_processed - initial_docs_processed == 1, (
+        f"Expected 1 document processed, got "
+        f"{final_docs_processed - initial_docs_processed}"
+    )
     assert (
         final_text_extracted - initial_text_extracted == 1
     ), f"Expected 1 text extracted, got {final_text_extracted - initial_text_extracted}"

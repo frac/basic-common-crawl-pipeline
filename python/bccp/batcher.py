@@ -1,15 +1,15 @@
 import argparse
 import json
+import time
 from typing import Any, Mapping, Optional, Sequence
 
-from prometheus_client import Counter, start_http_server
+from prometheus_client import Counter, Gauge, start_http_server
 
 from .commoncrawl import (
     BASE_URL,
-    CRAWL_PATH,
+    DEFAULT_CRAWL_VERSION,
     CCDownloader,
     CSVIndexReader,
-    DEFAULT_CRAWL_VERSION,
     Downloader,
     IndexReader,
     build_crawl_path,
@@ -32,6 +32,22 @@ cdx_chunks_processed_counter = Counter(
 )
 errors_counter = Counter("batcher_errors_total", "Processing errors", ["error_type"])
 
+# Progress monitoring metrics
+index_processing_progress_gauge = Gauge(
+    "batcher_index_processing_progress_percent",
+    "Index file processing progress percentage",
+)
+estimated_remaining_time_gauge = Gauge(
+    "batcher_estimated_remaining_seconds",
+    "Estimated remaining processing time in seconds",
+)
+total_index_lines_gauge = Gauge(
+    "batcher_total_index_lines", "Total number of lines in the index file"
+)
+processed_index_lines_counter = Counter(
+    "batcher_processed_index_lines_total", "Number of index lines processed"
+)
+
 
 class Batcher:
     def __init__(
@@ -49,6 +65,76 @@ class Batcher:
         self.downloader = downloader or CCDownloader(f"{BASE_URL}/{self.crawl_path}")
         self.index_reader = index_reader or CSVIndexReader(cluster_idx_filename)
         self.logger = setup_logger("batcher")
+
+        # Progress tracking
+        self.total_index_lines = self._count_index_lines()
+        self.processed_lines = 0
+        self.start_time: Optional[float] = None
+        self.last_progress_log_time = 0.0
+        self.progress_log_interval = 30  # Log progress every 30 seconds
+
+        # Set total lines metric
+        total_index_lines_gauge.set(self.total_index_lines)
+
+    def _count_index_lines(self) -> int:
+        """Count total number of lines in the index file for progress tracking."""
+        try:
+            with open(self.cluster_idx_filename, "r") as f:
+                return sum(1 for _ in f)
+        except Exception as e:
+            log_with_fields(
+                setup_logger("batcher"),
+                "warning",
+                "Could not count index lines, progress tracking will be approximate",
+                error=str(e),
+            )
+            return 0
+
+    def _update_progress(self) -> None:
+        """Update progress metrics and optionally log progress."""
+        if self.total_index_lines > 0:
+            progress_percent = (self.processed_lines / self.total_index_lines) * 100
+            index_processing_progress_gauge.set(progress_percent)
+
+            # Update estimated remaining time
+            if self.start_time is not None and self.processed_lines > 0:
+                elapsed_time = time.time() - self.start_time
+                if elapsed_time > 0:
+                    rate = self.processed_lines / elapsed_time
+                    remaining_lines = self.total_index_lines - self.processed_lines
+                    estimated_remaining = remaining_lines / rate if rate > 0 else 0.0
+                    estimated_remaining_time_gauge.set(estimated_remaining)
+
+            # Log progress at regular intervals
+            current_time = time.time()
+            if (
+                current_time - self.last_progress_log_time
+            ) >= self.progress_log_interval:
+                self._log_progress(progress_percent)
+                self.last_progress_log_time = current_time
+
+    def _log_progress(self, progress_percent: float) -> None:
+        """Log current processing progress."""
+        batches_published = int(batches_published_counter._value.get())
+        elapsed_time = (
+            time.time() - self.start_time if self.start_time is not None else 0.0
+        )
+
+        estimated_remaining = estimated_remaining_time_gauge._value.get()
+
+        log_with_fields(
+            self.logger,
+            "info",
+            "Processing progress update",
+            progress_percent=round(progress_percent, 2),
+            processed_lines=self.processed_lines,
+            total_lines=self.total_index_lines,
+            batches_published=batches_published,
+            elapsed_time_seconds=round(elapsed_time, 1),
+            estimated_remaining_seconds=(
+                round(estimated_remaining, 1) if estimated_remaining else None
+            ),
+        )
 
     def publish_batch(self, batch: Sequence[Mapping[str, Any]]) -> None:
         log_with_fields(self.logger, "info", "Publishing batch", batch_size=len(batch))
@@ -72,9 +158,25 @@ class Batcher:
 
     def process_index(self) -> None:
         found_urls = []
+        self.start_time = time.time()
+        self.last_progress_log_time = self.start_time
+
+        log_with_fields(
+            self.logger,
+            "info",
+            "Starting index processing with progress tracking",
+            total_lines=self.total_index_lines,
+        )
+
         try:
             for cdx_chunk in self.index_reader:
                 cdx_chunks_processed_counter.inc()
+                self.processed_lines += 1
+                processed_index_lines_counter.inc()
+
+                # Update progress tracking
+                self._update_progress()
+
                 try:
                     data = self.downloader.download_and_unzip(
                         cdx_chunk[1], int(cdx_chunk[2]), int(cdx_chunk[3])
@@ -132,6 +234,27 @@ class Batcher:
             if len(found_urls) > 0:
                 self.publish_batch(found_urls)
 
+            # Final progress update
+            self._update_progress()
+
+            # Log completion
+            total_time = time.time() - (
+                self.start_time if self.start_time is not None else 0.0
+            )
+            batches_published = int(batches_published_counter._value.get())
+
+            log_with_fields(
+                self.logger,
+                "info",
+                "Index processing completed",
+                total_lines_processed=self.processed_lines,
+                total_batches_published=batches_published,
+                total_processing_time_seconds=round(total_time, 2),
+                processing_rate_lines_per_second=(
+                    round(self.processed_lines / total_time, 2) if total_time > 0 else 0
+                ),
+            )
+
         except Exception:
             errors_counter.labels(error_type="index_processing").inc()
             raise
@@ -155,10 +278,13 @@ def parse_args() -> argparse.Namespace:
         "--cluster-idx-filename", type=str, help="Input file path", required=True
     )
     parser.add_argument(
-        "--crawl-version", 
-        type=str, 
+        "--crawl-version",
+        type=str,
         default=DEFAULT_CRAWL_VERSION,
-        help=f"Common Crawl version to process (format: CC-MAIN-YYYY-WW, default: {DEFAULT_CRAWL_VERSION})"
+        help=(
+            f"Common Crawl version to process "
+            f"(format: CC-MAIN-YYYY-WW, default: {DEFAULT_CRAWL_VERSION})"
+        ),
     )
     return parser.parse_args()
 
@@ -166,7 +292,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     batcher = Batcher(args.cluster_idx_filename, crawl_version=args.crawl_version)
-    
+
     log_with_fields(
         setup_logger("batcher"),
         "info",
@@ -175,7 +301,7 @@ def main() -> None:
         crawl_version=args.crawl_version,
         crawl_path=batcher.crawl_path,
     )
-    
+
     batcher.run()
 
 

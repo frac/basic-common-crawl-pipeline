@@ -3,7 +3,7 @@ import io
 import json
 import os
 import time
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 import trafilatura
 from prometheus_client import Counter, Histogram, start_http_server
@@ -163,7 +163,7 @@ class Worker:
         """Check if document length is within acceptable limits."""
         text_length = len(text)
         document_length_histogram.observe(text_length)
-        
+
         if text_length < self.min_doc_length:
             documents_filtered_counter.labels(filter_reason="too_short").inc()
             log_with_fields(
@@ -174,18 +174,18 @@ class Worker:
                 min_length=self.min_doc_length,
             )
             return False
-        
+
         if text_length > self.max_doc_length:
             documents_filtered_counter.labels(filter_reason="too_long").inc()
             log_with_fields(
                 self.logger,
-                "debug", 
+                "debug",
                 "Document filtered: too long",
                 text_length=text_length,
                 max_length=self.max_doc_length,
             )
             return False
-        
+
         return True
 
     def process_batch(self, ch, method, _properties, body):
@@ -256,7 +256,8 @@ class Worker:
 
                             # Check document length filter
                             if not self._is_document_length_valid(extracted_text):
-                                continue  # Skip documents that don't meet length requirements
+                                # Skip documents that don't meet length requirements
+                                continue
 
                             # Tokenize text if enabled
                             tokenization_data = self._tokenize_text(extracted_text)
@@ -329,7 +330,7 @@ class Worker:
 
     def run(self):
         start_http_server(9001)
-        
+
         while True:
             try:
                 self.channel.basic_qos(prefetch_count=1)
@@ -337,16 +338,16 @@ class Worker:
                     queue=QUEUE_NAME,
                     on_message_callback=self.process_batch,
                 )
-                
+
                 log_with_fields(
                     self.logger,
-                    "info", 
+                    "info",
                     "Worker started consuming messages",
-                    queue_name=QUEUE_NAME
+                    queue_name=QUEUE_NAME,
                 )
-                
+
                 self.channel.start_consuming()
-                
+
             except KeyboardInterrupt:
                 log_with_fields(self.logger, "info", "Worker shutting down")
                 self.channel.stop_consuming()
@@ -356,7 +357,7 @@ class Worker:
                     self.logger,
                     "error",
                     "Worker encountered error, reconnecting",
-                    error=str(e)
+                    error=str(e),
                 )
                 # Wait before reconnecting
                 time.sleep(5)
@@ -370,7 +371,10 @@ def parse_args() -> argparse.Namespace:
         "--tokenizer",
         type=str,
         default="gpt2",
-        help="Tokenizer to use (e.g., 'gpt2', 'bert-base-uncased', 'microsoft/DialoGPT-medium'). If not specified, no tokenization is performed.",
+        help=(
+            "Tokenizer to use (e.g., 'gpt2', 'bert-base-uncased', "
+            "'microsoft/DialoGPT-medium'). Default: gpt2."
+        ),
     )
     parser.add_argument(
         "--min-doc-length",

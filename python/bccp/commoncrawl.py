@@ -17,7 +17,10 @@ def validate_crawl_version(crawl_version: str) -> bool:
 def build_crawl_path(crawl_version: str) -> str:
     """Build the crawl path for a given crawl version."""
     if not validate_crawl_version(crawl_version):
-        raise ValueError(f"Invalid crawl version format: {crawl_version}. Expected format: CC-MAIN-YYYY-WW")
+        raise ValueError(
+            f"Invalid crawl version format: {crawl_version}. "
+            "Expected format: CC-MAIN-YYYY-WW"
+        )
     return f"cc-index/collections/{crawl_version}/indexes"
 
 

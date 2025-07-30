@@ -1,22 +1,27 @@
+import logging
 import os
 import time
-import logging
 from abc import ABC, abstractmethod
 from typing import Optional
 
 import pika
 import pika.adapters.blocking_connection
-from pika.exceptions import AMQPConnectionError, AMQPChannelError, ConnectionClosed, ChannelClosed
+from pika.exceptions import (
+    AMQPChannelError,
+    AMQPConnectionError,
+    ChannelClosed,
+    ConnectionClosed,
+)
 from prometheus_client import Counter, Histogram
 from tenacity import (
+    before_sleep_log,
     retry,
-    stop_after_attempt, 
-    wait_exponential,
     retry_if_exception_type,
-    before_sleep_log
+    stop_after_attempt,
+    wait_exponential,
 )
 
-from .logging import log_with_fields, setup_logger
+from .logging import setup_logger
 
 QUEUE_NAME = "batches"
 DEAD_LETTER_QUEUE_NAME = "batches.dead_letter"
@@ -47,7 +52,9 @@ class MessageQueueChannel(ABC):
 
 class RabbitMQChannel(MessageQueueChannel):
     def __init__(self) -> None:
-        self.connection: Optional[pika.adapters.blocking_connection.BlockingConnection] = None
+        self.connection: Optional[
+            pika.adapters.blocking_connection.BlockingConnection
+        ] = None
         self.channel: Optional[pika.adapters.blocking_connection.BlockingChannel] = None
         self.logger = setup_logger("rabbitmq")
         self._connect()
@@ -59,22 +66,22 @@ class RabbitMQChannel(MessageQueueChannel):
                 pika.URLParameters(os.environ["RABBITMQ_CONNECTION_STRING"])
             )
             self.channel = self.connection.channel()
-            
+
             # Declare main queue with dead letter exchange
             self.channel.queue_declare(
                 queue=QUEUE_NAME,
                 durable=True,
                 arguments={
-                    'x-dead-letter-exchange': '',
-                    'x-dead-letter-routing-key': DEAD_LETTER_QUEUE_NAME,
-                    'x-message-ttl': 3600000,  # 1 hour TTL
-                }
+                    "x-dead-letter-exchange": "",
+                    "x-dead-letter-routing-key": DEAD_LETTER_QUEUE_NAME,
+                    "x-message-ttl": 3600000,  # 1 hour TTL
+                },
             )
-            
+
             # Declare dead letter queue
             self.channel.queue_declare(queue=DEAD_LETTER_QUEUE_NAME, durable=True)
-            
-        except Exception as e:
+
+        except Exception:
             rabbitmq_connection_failures_counter.inc()
             raise
 
@@ -89,19 +96,21 @@ class RabbitMQChannel(MessageQueueChannel):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((AMQPConnectionError, AMQPChannelError, ConnectionClosed, ChannelClosed)),
-        before_sleep=before_sleep_log(setup_logger("rabbitmq"), logging.WARNING)
+        retry=retry_if_exception_type(
+            (AMQPConnectionError, AMQPChannelError, ConnectionClosed, ChannelClosed)
+        ),
+        before_sleep=before_sleep_log(setup_logger("rabbitmq"), logging.WARNING),
     )
     def basic_publish(self, exchange: str, routing_key: str, body: str) -> None:
         start_time = time.time()
         rabbitmq_publish_attempts_counter.inc()
-        
+
         try:
             self._ensure_connection()
-            
+
             # Type assertions for mypy
             assert self.channel is not None
-            
+
             # Publish with delivery confirmation
             self.channel.confirm_delivery()
             success = self.channel.basic_publish(
@@ -111,22 +120,31 @@ class RabbitMQChannel(MessageQueueChannel):
                 properties=pika.BasicProperties(
                     delivery_mode=2,  # Make message persistent
                 ),
-                mandatory=True  # Return message if queue doesn't exist
+                mandatory=True,  # Return message if queue doesn't exist
             )
-            
+
             if not success:
-                rabbitmq_publish_failures_counter.labels(error_type="delivery_failed").inc()
+                rabbitmq_publish_failures_counter.labels(
+                    error_type="delivery_failed"
+                ).inc()
                 raise AMQPChannelError("Message delivery was not confirmed")
-                
-        except (AMQPConnectionError, AMQPChannelError, ConnectionClosed, ChannelClosed) as e:
+
+        except (
+            AMQPConnectionError,
+            AMQPChannelError,
+            ConnectionClosed,
+            ChannelClosed,
+        ) as e:
             rabbitmq_publish_retries_counter.inc()
             rabbitmq_publish_failures_counter.labels(error_type=type(e).__name__).inc()
             # Invalidate connection for retry
             self.connection = None
             self.channel = None
             raise
-        except Exception as e:
-            rabbitmq_publish_failures_counter.labels(error_type="unexpected_error").inc()
+        except Exception:
+            rabbitmq_publish_failures_counter.labels(
+                error_type="unexpected_error"
+            ).inc()
             raise
         finally:
             rabbitmq_publish_duration_histogram.observe(time.time() - start_time)
@@ -143,7 +161,7 @@ class RabbitMQChannel(MessageQueueChannel):
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=10),
     retry=retry_if_exception_type((AMQPConnectionError, ConnectionClosed)),
-    before_sleep=before_sleep_log(setup_logger("rabbitmq"), logging.WARNING)
+    before_sleep=before_sleep_log(setup_logger("rabbitmq"), logging.WARNING),
 )
 def rabbitmq_channel() -> pika.adapters.blocking_connection.BlockingChannel:
     """Create a RabbitMQ channel with retry logic for worker consumption."""
@@ -152,23 +170,23 @@ def rabbitmq_channel() -> pika.adapters.blocking_connection.BlockingChannel:
             pika.URLParameters(os.environ["RABBITMQ_CONNECTION_STRING"])
         )
         channel = connection.channel()
-        
+
         # Declare main queue with dead letter exchange for workers
         channel.queue_declare(
             queue=QUEUE_NAME,
             durable=True,
             arguments={
-                'x-dead-letter-exchange': '',
-                'x-dead-letter-routing-key': DEAD_LETTER_QUEUE_NAME,
-                'x-message-ttl': 3600000,  # 1 hour TTL
-            }
+                "x-dead-letter-exchange": "",
+                "x-dead-letter-routing-key": DEAD_LETTER_QUEUE_NAME,
+                "x-message-ttl": 3600000,  # 1 hour TTL
+            },
         )
-        
+
         # Declare dead letter queue
         channel.queue_declare(queue=DEAD_LETTER_QUEUE_NAME, durable=True)
-        
+
         return channel
-        
-    except Exception as e:
+
+    except Exception:
         rabbitmq_connection_failures_counter.inc()
         raise

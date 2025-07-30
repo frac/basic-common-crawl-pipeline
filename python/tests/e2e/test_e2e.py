@@ -135,8 +135,8 @@ def test_full_pipeline_integration(
 
     # Mock downloaders
     mock_batcher_downloader = MagicMock()
-    mock_batcher_downloader.download_and_unzip.return_value = b"""0,100,22,165)/ 20240722120756 {"url": "http://example1.com/", "mime": "text/html", "status": "200", "languages": ["eng"], "digest": "ABC123", "length": "200", "offset": "0", "filename": "test1.warc.gz"}
-101,141,199,66)/ 20240722120757 {"url": "http://example2.com/", "mime": "text/html", "status": "200", "languages": ["eng"], "digest": "DEF456", "length": "300", "offset": "200", "filename": "test2.warc.gz"}"""
+    mock_batcher_downloader.download_and_unzip.return_value = b"""0,100,22,165)/ 20240722120756 {"url": "http://example1.com/", "mime": "text/html", "status": "200", "languages": ["eng"], "digest": "ABC123", "length": "200", "offset": "0", "filename": "test1.warc.gz"}  # noqa: E501
+101,141,199,66)/ 20240722120757 {"url": "http://example2.com/", "mime": "text/html", "status": "200", "languages": ["eng"], "digest": "DEF456", "length": "300", "offset": "200", "filename": "test2.warc.gz"}"""  # noqa: E501
 
     # Use fixture mock_downloader for worker
 
@@ -209,7 +209,7 @@ def test_prometheus_counters_e2e(
 
     # Mock downloaders
     mock_batcher_downloader = MagicMock()
-    mock_batcher_downloader.download_and_unzip.return_value = b'url1 20240722120756 {"url": "http://example.com/", "status": "200", "languages": ["eng"], "filename": "test.warc.gz", "offset": "0", "length": "200"}'
+    mock_batcher_downloader.download_and_unzip.return_value = b'url1 20240722120756 {"url": "http://example.com/", "status": "200", "languages": ["eng"], "filename": "test.warc.gz", "offset": "0", "length": "200"}'  # noqa: E501
 
     # Use fixtures for downloader and index reader
 
@@ -295,10 +295,10 @@ def test_batcher_filtering_logic(
 
     # Mock downloader with mixed data (some should be filtered)
     mock_downloader = MagicMock()
-    mock_downloader.download_and_unzip.return_value = b"""url1 20240722120756 {"url": "http://example1.com/", "status": "200", "languages": ["eng"]}
-url2 20240722120757 {"url": "http://example2.com/", "status": "404", "languages": ["eng"]}
-url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages": ["fra"]}
-url4 20240722120759 {"url": "http://example4.com/", "status": "200", "languages": ["eng"]}"""
+    mock_downloader.download_and_unzip.return_value = b"""url1 20240722120756 {"url": "http://example1.com/", "status": "200", "languages": ["eng"]}  # noqa: E501
+url2 20240722120757 {"url": "http://example2.com/", "status": "404", "languages": ["eng"]}  # noqa: E501
+url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages": ["fra"]}  # noqa: E501
+url4 20240722120759 {"url": "http://example4.com/", "status": "200", "languages": ["eng"]}"""  # noqa: E501
 
     # Use single-entry fixture for precise filtering test
 
@@ -351,7 +351,7 @@ def test_object_store_integration_e2e(
 
     # Mock downloaders
     mock_batcher_downloader = MagicMock()
-    mock_batcher_downloader.download_and_unzip.return_value = b'test-url 20240722120756 {"url": "http://e2e-example.com/", "status": "200", "languages": ["eng"], "filename": "e2e-test.warc.gz", "offset": "0", "length": "200"}'
+    mock_batcher_downloader.download_and_unzip.return_value = b'test-url 20240722120756 {"url": "http://e2e-example.com/", "status": "200", "languages": ["eng"], "filename": "e2e-test.warc.gz", "offset": "0", "length": "200"}'  # noqa: E501
 
     # Use fixtures for downloader and index reader
 
@@ -398,8 +398,8 @@ def test_real_text_extraction_with_object_store_verification(
 ):
     """Test that real trafilatura text extraction works and verify stored content."""
     import json
+
     from bccp.objectstore import ObjectStore
-    from datetime import datetime
 
     # Create a test batch message
     test_batch = [
@@ -565,9 +565,9 @@ def test_object_store_bucket_operations_e2e():
 @patch("bccp.worker.start_http_server")
 def test_document_length_filtering_e2e(mock_worker_server, rabbitmq_channel):
     """Test that document length filtering works in E2E context."""
-    from bccp.worker import Worker, documents_filtered_counter
     from bccp.objectstore import ObjectStore
-    
+    from bccp.worker import Worker, documents_filtered_counter
+
     # Create test batch with short content that should be filtered
     test_batch = [
         {
@@ -583,32 +583,40 @@ def test_document_length_filtering_e2e(mock_worker_server, rabbitmq_channel):
             },
         }
     ]
-    
+
     # Create WARC data with very short extractable content
-    html_content = b"<html><head><title>Short</title></head><body><p>Short.</p></body></html>"
+    html_content = (
+        b"<html><head><title>Short</title></head><body><p>Short.</p></body></html>"
+    )
     http_response = (
         b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
-        b"Content-Length: " + str(len(html_content)).encode() + b"\r\n\r\n" + html_content
+        b"Content-Length: "
+        + str(len(html_content)).encode()
+        + b"\r\n\r\n"
+        + html_content
     )
-    
+
     short_warc_data = (
         b"WARC/1.0\r\nWARC-Type: response\r\n"
         b"WARC-Target-URI: http://example.com/short-article\r\n"
         b"WARC-Date: 2024-07-22T12:07:56Z\r\n"
         b"WARC-Record-ID: <urn:uuid:12345>\r\n"
         b"Content-Type: application/http; msgtype=response\r\n"
-        b"Content-Length: " + str(len(http_response)).encode() + b"\r\n\r\n" + http_response
+        b"Content-Length: "
+        + str(len(http_response)).encode()
+        + b"\r\n\r\n"
+        + http_response
     )
-    
+
     # Mock downloader to return short WARC data
     mock_downloader = MagicMock()
     mock_downloader.download_and_unzip.return_value = short_warc_data
-    
+
     # Publish test message to queue
     rabbitmq_channel.basic_publish(
         exchange="", routing_key=QUEUE_NAME, body=json.dumps(test_batch)
     )
-    
+
     # Create worker with default length limits (should filter short documents)
     test_bucket = "test-length-filtering"
     worker = Worker(
@@ -616,28 +624,34 @@ def test_document_length_filtering_e2e(mock_worker_server, rabbitmq_channel):
         channel=rabbitmq_channel,
         bucket_name=test_bucket,
     )
-    
+
     # Ensure bucket exists
     object_store = ObjectStore()
     assert object_store.ensure_bucket_exists(test_bucket), "Should create test bucket"
-    
+
     # Get initial counter values
-    initial_filtered = documents_filtered_counter.labels(filter_reason="too_short")._value.get()
-    
+    initial_filtered = documents_filtered_counter.labels(
+        filter_reason="too_short"
+    )._value.get()
+
     # Process message - should filter out the short document
     method_frame, header_frame, body = rabbitmq_channel.basic_get(queue=QUEUE_NAME)
     assert method_frame is not None, "No message found in queue"
-    
+
     mock_method = MagicMock()
     mock_method.delivery_tag = method_frame.delivery_tag
-    
+
     worker.process_batch(rabbitmq_channel, mock_method, None, body)
-    
+
     # Verify that the document was filtered due to short length
-    final_filtered = documents_filtered_counter.labels(filter_reason="too_short")._value.get()
+    final_filtered = documents_filtered_counter.labels(
+        filter_reason="too_short"
+    )._value.get()
     assert final_filtered > initial_filtered, "Short document should have been filtered"
-    
+
     # Verify no document was stored (since it was filtered)
     # Try to list objects in the bucket - should be empty or very few
     objects = list(object_store.client.list_objects(test_bucket, recursive=True))
-    assert len(objects) == 0, f"No documents should be stored due to filtering, but found {len(objects)} objects"
+    assert (
+        len(objects) == 0
+    ), f"No documents should be stored due to filtering, but found {len(objects)} objects"  # noqa: E501
