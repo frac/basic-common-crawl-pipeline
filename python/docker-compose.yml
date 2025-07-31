@@ -9,18 +9,20 @@ services:
     environment:
       - RABBITMQ_DEFAULT_USER=guest
       - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
 
   minio:
     profiles: ["no_s3"]
     image: "minio/minio:latest"
     container_name: "${COMPOSE_PROJECT_NAME:-bccp}-minio"
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9100:9000"
+      - "9101:9001"
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
-    command: server /data --console-address ":9001"
+    command: server /data --console-address ":9101"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -55,3 +57,4 @@ services:
 
 volumes:
   minio_data:
+  rabbitmq_data:

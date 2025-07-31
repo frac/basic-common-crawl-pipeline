@@ -111,23 +111,16 @@ class RabbitMQChannel(MessageQueueChannel):
             # Type assertions for mypy
             assert self.channel is not None
 
-            # Publish with delivery confirmation
-            self.channel.confirm_delivery()
-            success = self.channel.basic_publish(
+            # Publish without delivery confirmation to avoid timeout issues
+            self.channel.basic_publish(
                 exchange=exchange,
                 routing_key=routing_key,
                 body=body,
                 properties=pika.BasicProperties(
                     delivery_mode=2,  # Make message persistent
                 ),
-                mandatory=True,  # Return message if queue doesn't exist
+                mandatory=False,  # Don't return message if queue doesn't exist
             )
-
-            if not success:
-                rabbitmq_publish_failures_counter.labels(
-                    error_type="delivery_failed"
-                ).inc()
-                raise AMQPChannelError("Message delivery was not confirmed")
 
         except (
             AMQPConnectionError,
