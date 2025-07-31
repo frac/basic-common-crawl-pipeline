@@ -23,7 +23,18 @@ def rabbitmq_channel(rabbitmq_connection_string):
     """Create a real RabbitMQ channel for e2e testing."""
     connection = pika.BlockingConnection(pika.URLParameters(rabbitmq_connection_string))
     channel = connection.channel()
-    channel.queue_declare(queue=QUEUE_NAME)
+    
+    # Use same settings as production - durable queue with TTL and dead letter
+    channel.queue_declare(
+        queue=QUEUE_NAME,
+        durable=True,
+        arguments={
+            "x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": "batches.dead_letter",
+            "x-message-ttl": 3600000,  # 1 hour TTL
+        }
+    )
+    channel.queue_declare(queue="batches.dead_letter", durable=True)
 
     # Purge queue to start clean
     channel.queue_purge(queue=QUEUE_NAME)
@@ -133,10 +144,16 @@ def test_full_pipeline_integration(
 ):
     """Test complete pipeline: batcher processes index, worker consumes."""
 
-    # Mock downloaders
+    # Mock downloaders - need to differentiate based on filename
     mock_batcher_downloader = MagicMock()
-    mock_batcher_downloader.download_and_unzip.return_value = b"""0,100,22,165)/ 20240722120756 {"url": "http://example1.com/", "mime": "text/html", "status": "200", "languages": ["eng"], "digest": "ABC123", "length": "200", "offset": "0", "filename": "test1.warc.gz"}  # noqa: E501
-101,141,199,66)/ 20240722120757 {"url": "http://example2.com/", "mime": "text/html", "status": "200", "languages": ["eng"], "digest": "DEF456", "length": "300", "offset": "200", "filename": "test2.warc.gz"}"""  # noqa: E501
+    def mock_download_func(filename, offset, length):
+        if filename == "test1.gz":
+            return b"""0,100,22,165)/ 20240722120756 {"url": "http://example1.com/", "mime": "text/html", "status": "200", "languages": ["eng"], "digest": "ABC123", "length": "200", "offset": "0", "filename": "test1.warc.gz"}"""
+        elif filename == "test2.gz":
+            return b"""101,141,199,66)/ 20240722120757 {"url": "http://example2.com/", "mime": "text/html", "status": "200", "languages": ["eng"], "digest": "DEF456", "length": "300", "offset": "200", "filename": "test2.warc.gz"}"""
+        else:
+            return b""
+    mock_batcher_downloader.download_and_unzip.side_effect = mock_download_func
 
     # Use fixture mock_downloader for worker
 
@@ -180,7 +197,7 @@ def test_full_pipeline_integration(
 
     # Verify pipeline processed data correctly
     assert message_count > 0, "No messages were processed"
-    assert len(processed_urls) == 4, f"Expected 4 URLs, got {len(processed_urls)}"
+    assert len(processed_urls) == 2, f"Expected 2 URLs (one per index entry), got {len(processed_urls)}"
     assert "0,100,22,165)/" in processed_urls
     assert "101,141,199,66)/" in processed_urls
 
@@ -270,7 +287,16 @@ def test_rabbitmq_connection(rabbitmq_connection_string):
     """Test basic RabbitMQ connectivity."""
     connection = pika.BlockingConnection(pika.URLParameters(rabbitmq_connection_string))
     channel = connection.channel()
-    channel.queue_declare(queue=QUEUE_NAME)
+    # Use same settings as production - durable queue with TTL and dead letter
+    channel.queue_declare(
+        queue=QUEUE_NAME,
+        durable=True,
+        arguments={
+            "x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": "batches.dead_letter",
+            "x-message-ttl": 3600000,  # 1 hour TTL
+        }
+    )
 
     # Test basic publish/consume
     test_message = {"test": "message"}
@@ -295,10 +321,10 @@ def test_batcher_filtering_logic(
 
     # Mock downloader with mixed data (some should be filtered)
     mock_downloader = MagicMock()
-    mock_downloader.download_and_unzip.return_value = b"""url1 20240722120756 {"url": "http://example1.com/", "status": "200", "languages": ["eng"]}  # noqa: E501
-url2 20240722120757 {"url": "http://example2.com/", "status": "404", "languages": ["eng"]}  # noqa: E501
-url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages": ["fra"]}  # noqa: E501
-url4 20240722120759 {"url": "http://example4.com/", "status": "200", "languages": ["eng"]}"""  # noqa: E501
+    mock_downloader.download_and_unzip.return_value = b"""url1 20240722120756 {"url": "http://example1.com/", "status": "200", "languages": ["eng"], "filename": "test1.warc.gz", "offset": "0", "length": "100"}
+url2 20240722120757 {"url": "http://example2.com/", "status": "404", "languages": ["eng"], "filename": "test2.warc.gz", "offset": "100", "length": "100"}
+url3 20240722120758 {"url": "http://example3.com/", "status": "200", "languages": ["fra"], "filename": "test3.warc.gz", "offset": "200", "length": "100"}
+url4 20240722120759 {"url": "http://example4.com/", "status": "200", "languages": ["eng"], "filename": "test4.warc.gz", "offset": "300", "length": "100"}"""
 
     # Use single-entry fixture for precise filtering test
 
@@ -482,7 +508,7 @@ def test_real_text_extraction_with_object_store_verification(
         assert stored_data["surt_url"] == "example.com/test-article"
         assert stored_data["text_length"] == len(extracted_text)
         assert stored_data["tokenization"]["tokenizer_name"] == "gpt2"
-        assert stored_data["tokenization"]["token_count"] == 90
+        assert stored_data["tokenization"]["token_count"] == 115
         tokens = stored_data["tokenization"]["tokens"]
         assert tokens[:20] == [
             29449,

@@ -43,6 +43,20 @@ services:
       exit 0;
       "
 
+  redis:
+    image: "redis:7-alpine"
+    container_name: "${COMPOSE_PROJECT_NAME:-bccp}-redis"
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   prometheus:
     image: "prom/prometheus"
     container_name: "${COMPOSE_PROJECT_NAME:-bccp}-prometheus"
@@ -55,3 +69,4 @@ services:
 
 volumes:
   minio_data:
+  redis_data:

@@ -3,7 +3,10 @@ import io
 import json
 import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .deduplication import URLDeduplicator
 
 import trafilatura
 from prometheus_client import Counter, Histogram, start_http_server
@@ -71,6 +74,7 @@ class Worker:
         tokenizer_name: Optional[str] = None,
         min_doc_length: int = 500,
         max_doc_length: int = 1000000,
+        deduplicator: Optional["URLDeduplicator"] = None,
     ):
         self.downloader = downloader or CCDownloader(BASE_URL)
         self.channel = channel or rabbitmq_channel()
@@ -81,6 +85,7 @@ class Worker:
         self.min_doc_length = min_doc_length
         self.max_doc_length = max_doc_length
         self.tokenizer = None
+        self.deduplicator = deduplicator
 
         # Initialize tokenizer if specified
         if tokenizer_name:
@@ -293,6 +298,12 @@ class Worker:
                                     text_length=len(extracted_text),
                                     url=document_data["url"],
                                 )
+                                
+                                # Mark URL as completed if deduplication is enabled
+                                if self.deduplicator:
+                                    self.deduplicator.mark_url_processed(
+                                        document_data["url"], success=True
+                                    )
                             else:
                                 storage_errors_counter.labels(
                                     error_type="store_document"
@@ -303,6 +314,14 @@ class Worker:
                                     "Failed to store document",
                                     url=document_data["url"],
                                 )
+                                
+                                # Mark URL as failed if deduplication is enabled
+                                if self.deduplicator:
+                                    self.deduplicator.mark_url_processed(
+                                        document_data["url"], 
+                                        success=False, 
+                                        error_reason="storage_failed"
+                                    )
 
                     except Exception as e:
                         processing_errors_counter.labels(

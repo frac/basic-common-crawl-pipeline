@@ -14,6 +14,7 @@ from .commoncrawl import (
     IndexReader,
     build_crawl_path,
 )
+from .deduplication import URLDeduplicator
 from .logging import log_with_fields, setup_logger
 from .rabbitmq import QUEUE_NAME, RabbitMQChannel
 
@@ -48,6 +49,11 @@ processed_index_lines_counter = Counter(
     "batcher_processed_index_lines_total", "Number of index lines processed"
 )
 
+# Deduplication metrics
+urls_deduplicated_counter = Counter(
+    "batcher_urls_deduplicated_total", "URLs skipped due to deduplication"
+)
+
 
 class Batcher:
     def __init__(
@@ -57,6 +63,8 @@ class Batcher:
         downloader: Optional[Downloader] = None,
         index_reader: Optional[IndexReader] = None,
         crawl_version: str = DEFAULT_CRAWL_VERSION,
+        enable_deduplication: bool = False,
+        deduplicator: Optional["URLDeduplicator"] = None,
     ):
         self.cluster_idx_filename = cluster_idx_filename
         self.crawl_version = crawl_version
@@ -65,6 +73,14 @@ class Batcher:
         self.downloader = downloader or CCDownloader(f"{BASE_URL}/{self.crawl_path}")
         self.index_reader = index_reader or CSVIndexReader(cluster_idx_filename)
         self.logger = setup_logger("batcher")
+        
+        # Deduplication setup
+        self.enable_deduplication = enable_deduplication
+        self.deduplicator = deduplicator
+        if self.enable_deduplication and self.deduplicator is None:
+            # Import here to avoid circular import
+            from .deduplication import URLDeduplicator
+            self.deduplicator = URLDeduplicator()
 
         # Progress tracking
         self.total_index_lines = self._count_index_lines()
@@ -208,6 +224,13 @@ class Batcher:
                                 ).inc()
                                 continue
 
+                            # Check for deduplication if enabled
+                            if self.enable_deduplication and self.deduplicator:
+                                url = metadata.get("url", "")
+                                if url and not self.deduplicator.try_reserve_url(url, self.crawl_version):
+                                    urls_deduplicated_counter.inc()
+                                    continue
+
                             found_urls.append(
                                 {
                                     "surt_url": values[0],
@@ -286,12 +309,60 @@ def parse_args() -> argparse.Namespace:
             f"(format: CC-MAIN-YYYY-WW, default: {DEFAULT_CRAWL_VERSION})"
         ),
     )
+    parser.add_argument(
+        "--enable-deduplication",
+        action="store_true",
+        help="Enable URL deduplication across multiple crawls (requires Redis)",
+    )
+    parser.add_argument(
+        "--redis-host",
+        type=str,
+        default="localhost",
+        help="Redis host for deduplication (default: localhost)",
+    )
+    parser.add_argument(
+        "--redis-port",
+        type=int,
+        default=6379,
+        help="Redis port for deduplication (default: 6379)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    batcher = Batcher(args.cluster_idx_filename, crawl_version=args.crawl_version)
+    
+    # Initialize deduplicator if enabled
+    deduplicator = None
+    if args.enable_deduplication:
+        try:
+            from .deduplication import URLDeduplicator
+            deduplicator = URLDeduplicator(
+                redis_host=args.redis_host,
+                redis_port=args.redis_port,
+            )
+            log_with_fields(
+                setup_logger("batcher"),
+                "info",
+                "URL deduplication enabled",
+                redis_host=args.redis_host,
+                redis_port=args.redis_port,
+            )
+        except Exception as e:
+            log_with_fields(
+                setup_logger("batcher"),
+                "error",
+                "Failed to initialize deduplication - Redis required",
+                error=str(e),
+            )
+            raise
+    
+    batcher = Batcher(
+        args.cluster_idx_filename,
+        crawl_version=args.crawl_version,
+        enable_deduplication=args.enable_deduplication,
+        deduplicator=deduplicator,
+    )
 
     log_with_fields(
         setup_logger("batcher"),
